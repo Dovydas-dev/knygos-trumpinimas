@@ -1,0 +1,26 @@
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Runtime data — ignore contents but keep the folders tracked via .gitkeep
+input/*.pdf
+cache/*
+output/*
+gemini_output/*
+claude_output/*
+
+# Keep empty directories tracked
+!input/.gitkeep
+!cache/.gitkeep
+!output/.gitkeep
+!gemini_output/.gitkeep
+!claude_output/.gitkeep
+
+# Claude Code session files
+.claude/
