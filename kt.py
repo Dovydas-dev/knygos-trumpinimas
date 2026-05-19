@@ -1,4 +1,5 @@
 import os
+import time
 import glob
 from google import genai
 import re
@@ -13,8 +14,9 @@ import json
 
 
 MODEL = "grok-4.20-0309-reasoning"
+#MODEL = "grok-4.3"
 GEMINI_MODEL = "gemini-3.1-flash-lite"
-book_ratio = 50 #What % of the book has to be left
+book_ratio = 40 #What % of the book has to be left
 
 load_dotenv(override=True)
 client = Client(api_key=os.getenv("XAI_API_KEY"))
@@ -41,6 +43,11 @@ def extract_text(pdf_path):
     return "\n\n".join(pages), page_count
 
 def convert_pdfs_to_ascii():
+    #delete all of the previous pdf's
+    ascii_list = glob.glob("ascii_input/*.pdf")
+    for path in ascii_list:
+        os.remove(path)
+        
     pdf_list = glob.glob("input/*.pdf")
     pdf_list = [re.sub(r'\\', '/', pdf) for pdf in pdf_list]
 
@@ -172,12 +179,12 @@ def make_grok_prompt(file_id, gemini_chunk, target_len):
 
     return system_prompt, user_prompt
 
-def make_batch(model, gemini_chunk, file_id, batch_id, request_index, target_len):
+def make_batch(model, gemini_chunk, file_id, book_name, request_index, target_len):
     system_prompt, user_prompt = make_grok_prompt(file_id, gemini_chunk, target_len)
 
     chat = client.chat.create(
         model=model,
-        batch_request_id = f"{batch_id}-{request_index}"
+        batch_request_id = f"{book_name}-{request_index}"
     )
     chat.append(system_prompt)
     chat.append(user_prompt)
@@ -190,7 +197,7 @@ def make_request(book_name, file_id, gemini_chunks, chunks):
     batch_requests = []
 
     for i, chunk in enumerate(start=0, iterable=gemini_chunks):
-        chunkBatch = make_batch(MODEL, chunk, file_id, batch_id, request_index=i+1, target_len=int(len(chunks[i]) * book_ratio / 100))
+        chunkBatch = make_batch(MODEL, chunk, file_id, book_name, request_index=i+1, target_len=int(len(chunks[i]) * book_ratio / 100))
         batch_requests.append(chunkBatch)
 
     print(f"Requests: {len(batch_requests)}")
@@ -205,14 +212,19 @@ def gemini_call(chunk, num):
     user = GEMINI_USER.format(chunk=chunk, ratio_pct=book_ratio, target_len=target, lo_len=lo, hi_len=hi)
     print(f"Gemini working on chunk: {num}")
 
-    response = gemini.models.generate_content(
-        model=GEMINI_MODEL,
-        contents=[
-            {"role": "user", "parts": [{"text": user}]}
-        ],
-        config={"system_instruction": system}
-    )
-    return response
+    while True:
+        try:
+            response = gemini.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=[
+                    {"role": "user", "parts": [{"text": user}]}
+                ],
+                config={"system_instruction": system}
+            )
+            return response
+        except Exception as e:
+            print(f"Gemini error: {e}. Waiting 1 minutes before retry...")
+            time.sleep(60)
 
 def shorten_gemini():
     files = glob.glob("ascii_input/*.pdf")
@@ -258,6 +270,8 @@ def convert_books_grok():
 
 
 if __name__ == "__main__":
+    print("Trumpinamos knygos...")
+    convert_pdfs_to_ascii()
     batchIds, grokFiles = convert_books_grok()
     batchInfo = [{"book_name": file["book_name"], "batchId": b_id} for file, b_id in zip(grokFiles, batchIds)]
     #Store Ids on disk

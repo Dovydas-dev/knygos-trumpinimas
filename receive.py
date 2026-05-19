@@ -4,6 +4,7 @@ import time
 from dotenv import load_dotenv
 from xai_sdk import Client
 import json
+import re
 
 
 load_dotenv(override=True)
@@ -39,7 +40,6 @@ def wait_for_grok_batch(batchID):
         resp = result.proto.response
         if resp.HasField("completion_response"):
             # Chat completion response
-            print(f"[{rid}] {result.response.content}")
             print(f"  Tokens used: {result.response.usage.total_tokens}")
     if all_failed:
         print(f"\nFailed: {len(all_failed)} requests")
@@ -48,36 +48,9 @@ def wait_for_grok_batch(batchID):
 
     return all_succeeded, all_failed
 
-
-def procces_final_files(all_succeeded, all_failed):
-    book_chunks = []
-    for result in all_succeeded:
-        if result.proto.response.HasField("completion_response"):
-            book_chunks.append(result.response.content)
-    if all_failed:
-        for result in all_failed:
-            print(f"[{result.batch_request_id}] Error: {result.error_message}")
-    return book_chunks
-
-def store_all_books():
-    knygos = []
-    batchInfo = json.load(open("batch_ids.json"))
-
-    for batch in (batchInfo):
-        batchId = batch["batchId"]
-        succeeded, failed = wait_for_grok_batch(batchId)
-        knygos.append(procces_final_files(succeeded, failed))
-
-    for i, id in enumerate(batchInfo):
-        name = id["book_name"]
-        with open(f"Final_output/{name}.txt", "w", encoding="utf-8") as f:
-            f.write("\n".join(knygos[i]))
-
-
-if __name__ == "__main__":
-    # Poll until all requests are processed
+def wait(batchId):
     while True:
-        batch = client.batch.get(batch_id=batch.batch_id)
+        batch = client.batch.get(batch_id=batchId)
         
         pending = batch.state.num_pending
         completed = batch.state.num_success + batch.state.num_error
@@ -87,8 +60,51 @@ if __name__ == "__main__":
         
         if pending == 0:
             print("Batch processing complete!")
+            return True
             break
         # Wait before polling again (avoid hammering the API)
         time.sleep(10)
 
+
+def procces_final_files(all_succeeded, all_failed):
+    book_chunks = []
+    #print(all_succeeded[0])
+    #print(all_succeeded[1])
+    sortedResponses = sorted(all_succeeded, key=lambda s: int(re.search(r'\d+$', s.batch_request_id).group()))
+    for result in sortedResponses:
+        if result.proto.response.HasField("completion_response"):
+            book_chunks.append(result.response.content)
+    if all_failed:
+        for result in all_failed:
+            print(f"[{result.batch_request_id}] Error: {result.error_message}")
+
+    
+    return book_chunks
+
+def store_all_books():
+    batchInfo = json.load(open("batch_ids.json"))
+
+    print("waiting for batches")
+
+    results = {}
+    while len(results) < len(batchInfo):
+        for batch in batchInfo:
+            batchId = batch["batchId"]
+            if batchId in results:
+                continue
+            if wait(batchId):
+                succeeded, failed = wait_for_grok_batch(batchId)
+                results[batchId] = procces_final_files(succeeded, failed)
+    knygos = list(results.values())
+
+    for i, id in enumerate(batchInfo):
+        name = id["book_name"]
+        knyga = "\n".join(knygos[i])
+        knyga = re.sub(r'\n{2,}', '\n', knyga)
+        with open(f"Final_output/{name}.txt", "w", encoding="utf-8") as f:
+            f.write(knyga)
+
+
+if __name__ == "__main__":
     store_all_books()
+    print("Knygos sutrumpintos!")
