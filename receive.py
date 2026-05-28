@@ -34,17 +34,13 @@ def wait_for_grok_batch(batchID):
             break
         pagination_token = page.pagination_token
     # Process results - handle different response types
-    print(f"Successfully processed: {len(all_succeeded)} requests")
-    for result in all_succeeded:
-        rid = result.batch_request_id
-        resp = result.proto.response
-        if resp.HasField("completion_response"):
-            # Chat completion response
-            print(f"  Tokens used: {result.response.usage.total_tokens}")
+    print(f"Successfully processed requests: {len(all_succeeded)}")
     if all_failed:
         print(f"\nFailed: {len(all_failed)} requests")
         for result in all_failed:
             print(f"[{result.batch_request_id}] Error: {result.error_message}")
+    else:
+        print("Failed requests: 0")
 
     return all_succeeded, all_failed
 
@@ -59,9 +55,8 @@ def wait(batchId):
         print(f"Progress: {completed}/{total} complete, {pending} pending")
         
         if pending == 0:
-            print("Batch processing complete!")
+            #print("Batch processing complete!")
             return True
-            break
         # Wait before polling again (avoid hammering the API)
         time.sleep(10)
 
