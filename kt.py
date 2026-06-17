@@ -8,7 +8,7 @@ import unicodedata
 from dotenv import load_dotenv
 from xai_sdk import Client
 from xai_sdk.chat import user, system
-from langchain_text_splitters import RecursiveCharacterTextSplitter, TextSplitter, SpacyTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 import pdfplumber
 import json
 
@@ -17,7 +17,7 @@ MODEL = "grok-4.20-0309-reasoning"
 #MODEL = "grok-4.3"
 GEMINI_MODEL = "gemini-3.1-flash-lite"
 book_ratio = 40 #What % of the book has to be left
-retry_count = 3
+retry_count = 1
 
 load_dotenv(override=True)
 client = Client(api_key=os.getenv("XAI_API_KEY"))
@@ -67,12 +67,16 @@ def convert_pdfs_to_ascii():
     return None
 
 def chunk_book(text):
-    chunker = RecursiveCharacterTextSplitter(chunk_size=12000, chunk_overlap=200)
+    chunker = RecursiveCharacterTextSplitter(chunk_size=2500, chunk_overlap=200)
     chunks = chunker.split_text(text)
     print(f"Chunks: {len(chunks)}")
     return chunks
 
-
+def chunk_book_grok(text):
+    chunker = RecursiveCharacterTextSplitter(chunk_size=2500, chunk_overlap=200)
+    chunks = chunker.split_text(text)
+    print(f"Chunks: {len(chunks)}")
+    return chunks
 
 
 
@@ -174,19 +178,19 @@ GEMINI_USER = """\
 Esi teksto redaktorius. Sutrumpink pateiktą knygos fragmentą.
 
 REIKALAVIMAI:
-- Tikslinis ilgis: {target_len} token.
-- Leistinas diapazonas: {lo_len}–{hi_len} token ({ratio_pct}% originalo)
+- Tikslinis ilgis: {target_len} žodžiai.
+- Leistinas diapazonas: {lo_len}–{hi_len} žodžiai ({ratio_pct}% originalo)
 - Išlaikyk originalo stilių, toną ir svarbias detales
 - Nekomentuok, nerašyk skaičių ar paaiškinimų
-- Pirmi ir paskutiniai fragmentų sakiniai neturi prasme skirtis nuo orginalo dėl testinumo (flow).
+- Pirmas ir paskutinis fragmento sakinys turi išlikti toks pat, neturi skirtis nuo orginalo dėl testinumo (flow).
 
-IŠLAIKYK TINKAMĄ KIEKĮ SIMBOLIŲ!
+IŠLAIKYK TINKAMĄ ŽODŽIŲ KIEKĮ!
 
 --- FRAGMENTAS ---
 {chunk}
 --- FRAGMENTO PABAIGA ---
 
-Sutrumpintas tekstas (TARP {lo_len} IR {hi_len} token):\
+Sutrumpintas tekstas (TARP {lo_len} IR {hi_len} ŽODŽIŲ):\
 """
 
 
@@ -229,7 +233,7 @@ def make_request(book_name, file_id, gemini_chunks, chunks):
 
 def gemini_call(chunk, num, max_retry_count):
     retries = 0
-    target = len(chunk) * book_ratio / 100
+    target = len(chunk.split()) * book_ratio / 100
     lo = target*0.9
     hi=target*1.1
     system = GEMINI_SYSTEM.format(ratio_pct=book_ratio)
@@ -380,24 +384,33 @@ def shorten_gemini():
     gemini_books = []
     book_chunks = []
 
+    gemini_book_chunks = []
+
     for file in files:
         converted = ""
         chunk_list = []
+        gemini_chunk_list = []
 
         text, pageCount = extract_text(file)
         chunks = chunk_book(text)
 
         for i, chunk in enumerate(start=1, iterable=chunks):
-            response = gemini_call(chunk, i, retry_count)
+            response = gemini_call(chunk, i, retry_count-1)
             converted += "\n" + response.text
             chunk_list.append(chunk)
+            gemini_chunk_list.append(response.text)
 
         gemini_books.append(converted)
         book_chunks.append(chunk_list)
+        gemini_book_chunks.append(gemini_chunk_list)
 
-    chunk_dict = {os.path.basename(f): chunks for f, chunks in zip(files, book_chunks)}
+        #Kiek sutrumpino žodžiais
+
+        print(f"Sutrumpinta iki: {int(len(converted.split())*100/len(text.split()))}%\nOrginalaus teksto žodžiai: {len(text.split())}\nSutrumpinto teksto žodžiai: {len(converted.split())}")
+
+    gemini_chunk_dict = {os.path.basename(f): gchunks for f, gchunks in zip(files, gemini_book_chunks)}
     with open("book_chunks.json", "w", encoding="utf-8") as fp:
-        json.dump(chunk_dict, fp, ensure_ascii=False, indent=2)
+        json.dump(gemini_chunk_dict, fp, ensure_ascii=False, indent=2)
 
     return gemini_books, book_chunks
 
@@ -408,16 +421,16 @@ def convert_books_grok():
     grokFiles = upload_pdfs_to_grok()
 
     #Rechunks gemini responses
-    #gemini_chunks = []
-    #for i in range(len(book_chunks)):
-    #    gemini_chunks.append(chunk_book(gemini_books[i]))
+    gemini_chunks = []
+    for book in gemini_books:
+        gemini_chunks.append(chunk_book_grok(book))
 
     #Calls Grok 
     batchIds = []
     for i, file in enumerate(grokFiles):
         bookName = file["book_name"]
         file_id = file["file"].id
-        batchIds.append(make_request(bookName, file_id, book_chunks[i], book_chunks[i]))
+        batchIds.append(make_request(bookName, file_id, book_chunks[i], gemini_chunks[i]))
 
     return batchIds, grokFiles
 

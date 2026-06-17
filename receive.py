@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 from xai_sdk import Client
 import json
 import re
+from kt import extract_text
 
 
 load_dotenv(override=True)
@@ -77,7 +78,8 @@ def procces_final_files(all_succeeded, all_failed):
     return book_chunks
 
 def store_all_books():
-    batchInfo = json.load(open("batch_ids.json"))
+    with open("batch_ids.json", "r", encoding="utf-8") as f:
+        batchInfo = json.load(f)
 
     print("waiting for batches")
 
@@ -96,6 +98,11 @@ def store_all_books():
         name = id["book_name"]
         knyga = "\n".join(knygos[i])
         knyga = re.sub(r'\n{2,}', '\n', knyga)
+
+        ilgis = len(knyga)
+        prad_ilgis, pages = extract_text(f"input/{name}")
+        print(f"{name} sutrumpintas iki: {int(ilgis*100/int(len(prad_ilgis)))}%")
+        
         with open(f"Final_output/{name}.txt", "w", encoding="utf-8") as f:
             f.write(knyga)
 
